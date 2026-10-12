@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Env files
+.env
+*.env.local
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# ML artifacts
+ml/models/*.pkl
+ml/models/*.joblib
+ml/data/*.csv
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+
+# graphify (local exploration tool output, not project deliverable)
+graphify-out/

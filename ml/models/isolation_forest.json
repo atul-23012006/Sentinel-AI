@@ -1,0 +1,20 @@
+{
+  "feature_names": [
+    "login_hour",
+    "events_last_hour",
+    "distinct_resources_last_hour",
+    "downloads_last_hour",
+    "denied_ratio_last_24h",
+    "failed_login_count",
+    "new_device",
+    "new_location",
+    "outside_business_hours"
+  ],
+  "n_estimators": 200,
+  "contamination": 0.1111111111111111,
+  "random_state": 42,
+  "train_rows": 3200,
+  "test_rows": 1300,
+  "decision_score_min": -0.1746606226837103,
+  "decision_score_max": 0.18689034130885895
+}
