@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -8,7 +10,15 @@ from app.auth.security import create_access_token, hash_password, verify_passwor
 from app.config import settings
 from app.database import get_db
 from app.models import AccessEvent, User
-from app.schemas import MFASetupRead, MFAVerifyRequest, Token, UserCreate, UserLogin, UserRead
+from app.schemas import (
+    EmailVerifyRequest,
+    MFASetupRead,
+    MFAVerifyRequest,
+    Token,
+    UserCreate,
+    UserLogin,
+    UserRead,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -166,6 +176,7 @@ def mfa_verify(
 
     event.final_decision = "ALLOW"
     event.reason = f"{event.reason}; MFA verified"
+    current_user.blocked_request_count = 0
     db.commit()
     log_access_event(
         db,
@@ -175,5 +186,67 @@ def mfa_verify(
         policy_decision="ALLOW",
         final_decision="ALLOW",
         reason=f"MFA verified for event {event.event_id}",
+    )
+    return current_user
+
+
+@router.post("/email-verify/verify", response_model=UserRead)
+def email_verify(
+    payload: EmailVerifyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Completes the email-based step-up challenge issued when a user with
+    no TOTP configured triggers EMAIL_VERIFICATION_REQUIRED (see
+    app/resources/router.py). On success, upgrades the event to ALLOW and
+    resets the repeated-abuse counter, mirroring mfa_verify above.
+    """
+    event = (
+        db.query(AccessEvent)
+        .filter(AccessEvent.event_id == payload.event_id, AccessEvent.user_id == current_user.user_id)
+        .first()
+    )
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Access event not found")
+    if event.final_decision != "EMAIL_VERIFICATION_REQUIRED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This event is not awaiting email verification"
+        )
+    if not current_user.email_otp_hash or not current_user.email_otp_expires_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code is pending")
+    expires_at = current_user.email_otp_expires_at
+    if expires_at.tzinfo is None:
+        # SQLite (used in tests) stores DateTime(timezone=True) values naive;
+        # Postgres round-trips them tz-aware. Normalize before comparing.
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
+
+    if not verify_password(payload.code, current_user.email_otp_hash):
+        log_access_event(
+            db,
+            user_id=current_user.user_id,
+            resource_id=event.resource_id,
+            action="EMAIL_VERIFY",
+            policy_decision="DENY",
+            final_decision="DENY",
+            reason=f"Invalid email verification code for event {event.event_id}",
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid verification code")
+
+    event.final_decision = "ALLOW"
+    event.reason = f"{event.reason}; email verification confirmed"
+    current_user.email_otp_hash = None
+    current_user.email_otp_expires_at = None
+    current_user.blocked_request_count = 0
+    db.commit()
+    log_access_event(
+        db,
+        user_id=current_user.user_id,
+        resource_id=event.resource_id,
+        action="EMAIL_VERIFY",
+        policy_decision="ALLOW",
+        final_decision="ALLOW",
+        reason=f"Email verification confirmed for event {event.event_id}",
     )
     return current_user

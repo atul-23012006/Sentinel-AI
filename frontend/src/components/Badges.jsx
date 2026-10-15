@@ -1,5 +1,12 @@
 export function DecisionBadge({ decision }) {
-  const cls = { ALLOW: "badge-allow", DENY: "badge-deny", MFA_REQUIRED: "badge-mfa", BLOCK: "badge-block" }[decision] || "";
+  const cls =
+    {
+      ALLOW: "badge-allow",
+      DENY: "badge-deny",
+      MFA_REQUIRED: "badge-mfa",
+      EMAIL_VERIFICATION_REQUIRED: "badge-email_verification_required",
+      BLOCK: "badge-block",
+    }[decision] || "";
   return <span className={`badge ${cls}`}>{decision}</span>;
 }
 

@@ -41,8 +41,10 @@ def update_user(
     department/clearance_level - these are otherwise only self-declared at
     registration with no approval step, so changing them later is
     deliberately admin-gated rather than self-service. Resetting
-    account_status to ACTIVE also clears failed_login_count so the lockout
-    counter doesn't immediately re-trip.
+    account_status to ACTIVE also clears failed_login_count and
+    blocked_request_count so neither lockout counter immediately re-trips -
+    this is the "admin verification and confirmation" step that unlocks an
+    account the repeated-abuse escalation in app/resources/router.py locked.
     """
     user = db.query(User).filter(User.user_id == user_id).first()
     if user is None:
@@ -54,6 +56,7 @@ def update_user(
         user.account_status = payload.account_status
         if payload.account_status == "ACTIVE":
             user.failed_login_count = 0
+            user.blocked_request_count = 0
     if payload.role is not None:
         user.role = payload.role
     if payload.department is not None:

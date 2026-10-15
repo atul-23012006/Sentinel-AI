@@ -77,23 +77,39 @@ def test_score_is_capped_at_100():
 
 
 def test_policy_deny_always_wins_regardless_of_risk():
-    assert _adaptive_decision("DENY", 0) == "DENY"
-    assert _adaptive_decision("DENY", 100) == "DENY"
+    assert _adaptive_decision("DENY", 0, mfa_available=True) == "DENY"
+    assert _adaptive_decision("DENY", 100, mfa_available=False) == "DENY"
 
 
 def test_low_risk_allow_stays_allow():
-    assert _adaptive_decision("ALLOW", 0) == "ALLOW"
-    assert _adaptive_decision("ALLOW", 30) == "ALLOW"
+    assert _adaptive_decision("ALLOW", 0, mfa_available=True) == "ALLOW"
+    assert _adaptive_decision("ALLOW", 30, mfa_available=False) == "ALLOW"
 
 
-def test_elevated_risk_requires_mfa():
-    assert _adaptive_decision("ALLOW", 61) == "MFA_REQUIRED"
-    assert _adaptive_decision("ALLOW", 80) == "MFA_REQUIRED"
+def test_elevated_risk_requires_mfa_when_configured():
+    assert _adaptive_decision("ALLOW", 61, mfa_available=True) == "MFA_REQUIRED"
+    assert _adaptive_decision("ALLOW", 80, mfa_available=True) == "MFA_REQUIRED"
 
 
-def test_high_risk_blocks():
-    assert _adaptive_decision("ALLOW", 81) == "BLOCK"
-    assert _adaptive_decision("ALLOW", 100) == "BLOCK"
+def test_elevated_risk_requires_email_verification_when_mfa_not_configured():
+    assert _adaptive_decision("ALLOW", 61, mfa_available=False) == "EMAIL_VERIFICATION_REQUIRED"
+    assert _adaptive_decision("ALLOW", 80, mfa_available=False) == "EMAIL_VERIFICATION_REQUIRED"
+
+
+def test_high_risk_blocks_regardless_of_mfa_availability():
+    assert _adaptive_decision("ALLOW", 81, mfa_available=True) == "BLOCK"
+    assert _adaptive_decision("ALLOW", 100, mfa_available=False) == "BLOCK"
+
+
+def test_burst_detected_blocks_even_at_low_risk_score():
+    # Rapid-fire detection is a deterministic rate-limit, not a risk-score
+    # signal - it must force BLOCK even when behavioral risk reads near zero.
+    assert _adaptive_decision("ALLOW", 0, mfa_available=True, burst_detected=True) == "BLOCK"
+    assert _adaptive_decision("ALLOW", 30, mfa_available=False, burst_detected=True) == "BLOCK"
+
+
+def test_burst_detected_never_overrides_a_policy_deny():
+    assert _adaptive_decision("DENY", 0, mfa_available=True, burst_detected=True) == "DENY"
 
 
 @pytest.fixture()

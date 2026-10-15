@@ -1,12 +1,16 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.alerts.service import create_alert_if_needed
 from app.audit.service import log_access_event
+from app.auth import email_service
 from app.auth.dependencies import get_current_user, require_role
+from app.auth.security import hash_password
 from app.config import settings
 from app.database import get_db
-from app.models import Resource, ResourceGrant, User
+from app.models import AccessEvent, Resource, ResourceGrant, SecurityAlert, User
 from app.policies.engine import HybridPolicyEngine
 from app.risk.engine import risk_engine
 from app.schemas import (
@@ -28,19 +32,28 @@ router = APIRouter(prefix="/resources", tags=["resources"])
 _policy_engine = HybridPolicyEngine()
 
 
-def _adaptive_decision(policy_decision: str, risk_score: int) -> str:
+def _adaptive_decision(
+    policy_decision: str, risk_score: int, mfa_available: bool, burst_detected: bool = False
+) -> str:
     """Maps a PASSing policy decision + behavioral risk score to a final
     decision per README §8/§9. A policy DENY is never overridden by a low
     risk score - authorization and behavioral risk are separate, and policy
     denial always wins. A policy ALLOW can still be escalated: a user having
-    permission does not mean their current behavior is safe.
+    permission does not mean their current behavior is safe. Step-up auth is
+    TOTP MFA when the user has one configured, otherwise a one-time emailed
+    code - request_access additionally tracks repeated step-up/block
+    triggers and auto-locks the account after too many (see below).
+
+    burst_detected is a deterministic rate-limit signal (too many access
+    attempts in too short a window - see request_access) independent of the
+    ML-blended risk_score, forcing BLOCK even when behavioral risk reads low.
     """
     if policy_decision == "DENY":
         return "DENY"
-    if risk_score >= settings.risk_block_threshold:
+    if burst_detected or risk_score >= settings.risk_block_threshold:
         return "BLOCK"
     if risk_score >= settings.risk_mfa_threshold:
-        return "MFA_REQUIRED"
+        return "MFA_REQUIRED" if mfa_available else "EMAIL_VERIFICATION_REQUIRED"
     return "ALLOW"
 
 
@@ -219,9 +232,70 @@ def request_access(
         device_id=payload.device_id,
         location=payload.location,
     )
-    final_decision = _adaptive_decision(evaluation.final_decision, risk_result.score)
-    if final_decision != evaluation.final_decision:
+
+    # Rapid-fire / burst detection: a deterministic rate-limit on raw request
+    # volume, independent of the risk score - counts this user's prior
+    # resource-access attempts (any action, any outcome) in the last
+    # burst_window_seconds. Reaching the threshold means *this* request is
+    # the max_burst_requests-th in the window, so it gets blocked.
+    burst_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.burst_window_seconds)
+    recent_request_count = (
+        db.query(AccessEvent)
+        .filter(
+            AccessEvent.user_id == current_user.user_id,
+            AccessEvent.resource_id.isnot(None),
+            AccessEvent.timestamp >= burst_cutoff,
+        )
+        .count()
+    )
+    burst_detected = recent_request_count >= settings.max_burst_requests - 1
+
+    final_decision = _adaptive_decision(
+        evaluation.final_decision,
+        risk_result.score,
+        mfa_available=bool(current_user.otp_secret),
+        burst_detected=burst_detected,
+    )
+    if burst_detected and final_decision == "BLOCK" and evaluation.final_decision != "DENY":
+        reason = (
+            f"{reason}; Rapid-fire access: {recent_request_count + 1} requests within "
+            f"{settings.burst_window_seconds}s (threshold {settings.max_burst_requests})"
+        )
+    elif final_decision != evaluation.final_decision:
         reason = f"{reason}; Adaptive response: risk score {risk_result.score}/100 ({'; '.join(risk_result.reasons)})"
+
+    # Repeated-abuse escalation: every step-up challenge or block counts
+    # against the user. Crossing the threshold converts this request into a
+    # hard BLOCK and locks the account - same account_status="LOCKED"
+    # mechanism as the login brute-force lockout in auth/router.py - pending
+    # admin reactivation via PATCH /users/{id}.
+    account_locked = False
+    if final_decision in ("MFA_REQUIRED", "EMAIL_VERIFICATION_REQUIRED", "BLOCK"):
+        current_user.blocked_request_count += 1
+        if current_user.blocked_request_count >= settings.max_blocked_requests:
+            if final_decision != "BLOCK":
+                reason = (
+                    f"{reason}; escalated to BLOCK after "
+                    f"{current_user.blocked_request_count} suspicious/step-up attempts"
+                )
+            final_decision = "BLOCK"
+            if current_user.account_status == "ACTIVE":
+                current_user.account_status = "LOCKED"
+                account_locked = True
+    elif final_decision == "ALLOW":
+        current_user.blocked_request_count = 0
+    db.commit()
+
+    email_verification_hint = None
+    if final_decision == "EMAIL_VERIFICATION_REQUIRED":
+        code = email_service.generate_code()
+        current_user.email_otp_hash = hash_password(code)
+        current_user.email_otp_expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.email_otp_expire_minutes
+        )
+        db.commit()
+        if not email_service.send_verification_code(current_user.email, code):
+            email_verification_hint = "SMTP is not configured - check the backend server logs for the verification code."
 
     event = log_access_event(
         db,
@@ -240,6 +314,43 @@ def request_access(
     if evaluation.final_decision == "ALLOW":
         alert = create_alert_if_needed(db, event=event, risk_score=risk_result.score, reasons=risk_result.reasons)
 
+    if burst_detected and final_decision == "BLOCK" and evaluation.final_decision != "DENY":
+        burst_alert = SecurityAlert(
+            user_id=current_user.user_id,
+            event_id=event.event_id,
+            alert_type="RAPID_FIRE_ACCESS",
+            risk_score=risk_result.score,
+            severity="CRITICAL",
+            description=(
+                f"{recent_request_count + 1} resource-access attempts within "
+                f"{settings.burst_window_seconds}s (threshold {settings.max_burst_requests}) - "
+                "request denied and flagged for review."
+            ),
+            status="OPEN",
+        )
+        db.add(burst_alert)
+        db.commit()
+        db.refresh(burst_alert)
+        alert = burst_alert
+
+    if account_locked:
+        lockout_alert = SecurityAlert(
+            user_id=current_user.user_id,
+            event_id=event.event_id,
+            alert_type="REPEATED_ABUSE_LOCKOUT",
+            risk_score=risk_result.score,
+            severity="CRITICAL",
+            description=(
+                f"Account auto-locked after {current_user.blocked_request_count} repeated "
+                "step-up/blocked access attempts - requires admin review and reactivation."
+            ),
+            status="OPEN",
+        )
+        db.add(lockout_alert)
+        db.commit()
+        db.refresh(lockout_alert)
+        alert = lockout_alert
+
     return AccessDecisionRead(
         event_id=event.event_id,
         final_decision=final_decision,
@@ -248,6 +359,8 @@ def request_access(
         ],
         risk_score=risk_result.score,
         risk_reasons=risk_result.reasons,
-        mfa_setup_required=final_decision == "MFA_REQUIRED" and not current_user.otp_secret,
+        mfa_setup_required=False,
+        account_locked=account_locked,
+        email_verification_hint=email_verification_hint,
         alert_id=alert.alert_id if alert else None,
     )

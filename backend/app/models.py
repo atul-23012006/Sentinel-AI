@@ -31,7 +31,10 @@ class User(Base):
     device_trust: Mapped[str] = mapped_column(String(32), nullable=False, default="UNTRUSTED")
     account_status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    blocked_request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     otp_secret: Mapped[str | None] = mapped_column(String(64))
+    email_otp_hash: Mapped[str | None] = mapped_column(String(255))
+    email_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -86,7 +89,9 @@ class AccessEvent(Base):
 
     __table_args__ = (
         CheckConstraint("policy_decision IN ('ALLOW', 'DENY')"),
-        CheckConstraint("final_decision IN ('ALLOW', 'MFA_REQUIRED', 'BLOCK', 'DENY')"),
+        CheckConstraint(
+            "final_decision IN ('ALLOW', 'MFA_REQUIRED', 'EMAIL_VERIFICATION_REQUIRED', 'BLOCK', 'DENY')"
+        ),
         CheckConstraint("risk_score BETWEEN 0 AND 100"),
     )
 

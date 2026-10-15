@@ -152,6 +152,7 @@ th {
 .badge-allow { background: #14532d; color: #86efac; }
 .badge-deny { background: #450a0a; color: #fca5a5; }
 .badge-mfa { background: #713f12; color: #fde68a; }
+.badge-email_verification_required { background: #713f12; color: #fde68a; }
 .badge-block { background: #7f1d1d; color: #fecaca; }
 
 .badge-low { background: #14532d; color: #86efac; }

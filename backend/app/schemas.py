@@ -100,6 +100,8 @@ class AccessDecisionRead(BaseModel):
     risk_score: int | None = None
     risk_reasons: list[str] = Field(default_factory=list)
     mfa_setup_required: bool = False
+    account_locked: bool = False
+    email_verification_hint: str | None = None
     alert_id: int | None = None
 
 
@@ -134,6 +136,11 @@ class MFASetupRead(BaseModel):
 
 
 class MFAVerifyRequest(BaseModel):
+    event_id: int
+    code: str = Field(min_length=6, max_length=6)
+
+
+class EmailVerifyRequest(BaseModel):
     event_id: int
     code: str = Field(min_length=6, max_length=6)
 

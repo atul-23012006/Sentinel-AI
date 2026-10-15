@@ -471,6 +471,8 @@ function AccessPanel({ resource }) {
   const [otpSecret, setOtpSecret] = useState(null);
   const [code, setCode] = useState("");
   const [mfaMessage, setMfaMessage] = useState(null);
+  const [emailCode, setEmailCode] = useState("");
+  const [emailMessage, setEmailMessage] = useState(null);
 
   async function handleRequest(e) {
     e.preventDefault();
@@ -478,6 +480,7 @@ function AccessPanel({ resource }) {
     setError(null);
     setResult(null);
     setMfaMessage(null);
+    setEmailMessage(null);
     try {
       const response = await api.requestAccess(resource.resource_id, {
         action,
@@ -505,6 +508,17 @@ function AccessPanel({ resource }) {
       setMfaMessage({ ok: true, text: "MFA verified - access upgraded to ALLOW." });
     } catch (err) {
       setMfaMessage({ ok: false, text: err.detail || "Verification failed" });
+    }
+  }
+
+  async function handleEmailVerify(e) {
+    e.preventDefault();
+    setEmailMessage(null);
+    try {
+      await api.emailVerify(result.event_id, emailCode);
+      setEmailMessage({ ok: true, text: "Email code verified - access upgraded to ALLOW." });
+    } catch (err) {
+      setEmailMessage({ ok: false, text: err.detail || "Verification failed" });
     }
   }
 
@@ -571,6 +585,39 @@ function AccessPanel({ resource }) {
                 <li key={i}>{r}</li>
               ))}
             </ul>
+          )}
+
+          {result.account_locked && (
+            <div className="card" style={{ marginTop: 14, borderColor: "var(--critical)" }}>
+              <strong style={{ color: "var(--critical)" }}>Account locked</strong>
+              <p className="muted">
+                Too many suspicious or blocked access attempts in a row. This account is now locked and can only be
+                reactivated by an administrator (Users tab &rarr; set account status to ACTIVE).
+              </p>
+            </div>
+          )}
+
+          {result.final_decision === "EMAIL_VERIFICATION_REQUIRED" && (
+            <div className="card" style={{ marginTop: 14 }}>
+              <strong>Email verification required</strong>
+              <p className="muted">
+                This activity is authorized by policy but was flagged as behaviorally risky, and no authenticator
+                app is set up for this account. A one-time code was emailed to your registered address.
+              </p>
+              {result.email_verification_hint && <p className="muted">{result.email_verification_hint}</p>}
+              <form className="inline" onSubmit={handleEmailVerify}>
+                <div className="field">
+                  <label>6-digit code</label>
+                  <input value={emailCode} onChange={(e) => setEmailCode(e.target.value)} maxLength={6} required />
+                </div>
+                <button className="primary" type="submit">
+                  Verify
+                </button>
+              </form>
+              {emailMessage && (
+                <p style={{ color: emailMessage.ok ? "var(--ok)" : "var(--critical)" }}>{emailMessage.text}</p>
+              )}
+            </div>
           )}
 
           {result.final_decision === "MFA_REQUIRED" && (

@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS users (
     account_status      VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'
                             CHECK (account_status IN ('ACTIVE', 'LOCKED', 'DISABLED')),
     failed_login_count  INTEGER NOT NULL DEFAULT 0,
+    blocked_request_count INTEGER NOT NULL DEFAULT 0,
     otp_secret          VARCHAR(64),
+    email_otp_hash       VARCHAR(255),
+    email_otp_expires_at TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS access_events (
     device_id            VARCHAR(255),
     policy_decision      VARCHAR(16) NOT NULL CHECK (policy_decision IN ('ALLOW', 'DENY')),
     risk_score           INTEGER CHECK (risk_score BETWEEN 0 AND 100),
-    final_decision       VARCHAR(32) NOT NULL CHECK (final_decision IN ('ALLOW', 'MFA_REQUIRED', 'BLOCK', 'DENY')),
+    final_decision       VARCHAR(32) NOT NULL CHECK (final_decision IN ('ALLOW', 'MFA_REQUIRED', 'EMAIL_VERIFICATION_REQUIRED', 'BLOCK', 'DENY')),
     reason                TEXT
 );
 
