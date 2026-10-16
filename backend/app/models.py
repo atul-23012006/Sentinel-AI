@@ -40,7 +40,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(f"clearance_level IN {CLEARANCE_LEVELS}"),
         CheckConstraint("device_trust IN ('TRUSTED', 'UNTRUSTED')"),
-        CheckConstraint("account_status IN ('ACTIVE', 'LOCKED', 'DISABLED')"),
+        CheckConstraint("account_status IN ('PENDING', 'ACTIVE', 'LOCKED', 'DISABLED')"),
     )
 
 

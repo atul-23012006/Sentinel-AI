@@ -101,11 +101,19 @@ def test_high_risk_blocks_regardless_of_mfa_availability():
     assert _adaptive_decision("ALLOW", 100, mfa_available=False) == "BLOCK"
 
 
-def test_burst_detected_blocks_even_at_low_risk_score():
+def test_burst_detected_forces_step_up_even_at_low_risk_score():
     # Rapid-fire detection is a deterministic rate-limit, not a risk-score
-    # signal - it must force BLOCK even when behavioral risk reads near zero.
-    assert _adaptive_decision("ALLOW", 0, mfa_available=True, burst_detected=True) == "BLOCK"
-    assert _adaptive_decision("ALLOW", 30, mfa_available=False, burst_detected=True) == "BLOCK"
+    # signal - it must force at least a step-up challenge even when
+    # behavioral risk reads near zero, giving the user a chance to
+    # reconfirm identity rather than an immediate hard block.
+    assert _adaptive_decision("ALLOW", 0, mfa_available=True, burst_detected=True) == "MFA_REQUIRED"
+    assert _adaptive_decision("ALLOW", 30, mfa_available=False, burst_detected=True) == "EMAIL_VERIFICATION_REQUIRED"
+
+
+def test_burst_detected_does_not_downgrade_an_independent_block():
+    # If the risk score already crosses the block threshold on its own,
+    # burst detection doesn't soften that back down to a step-up.
+    assert _adaptive_decision("ALLOW", 81, mfa_available=True, burst_detected=True) == "BLOCK"
 
 
 def test_burst_detected_never_overrides_a_policy_deny():

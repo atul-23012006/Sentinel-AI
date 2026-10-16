@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     tbac_start_hour: int = 9
     tbac_end_hour: int = 18
 
+    # Admin-gated registration: a newly registered account starts PENDING
+    # and cannot log in until an Administrator approves it (PATCH /users/{id}
+    # with account_status=ACTIVE) - notified by email when configured. The
+    # very first user ever registered (empty users table) is auto-activated
+    # as a one-time bootstrap, since there's no admin yet to approve them.
+    require_admin_approval: bool = True
+
     # Risk engine (Phase 4/5)
     risk_model_path: str = "app/risk/artifacts/isolation_forest.joblib"
     risk_monitor_threshold: int = 31  # >= this: ALLOW but flagged for monitoring

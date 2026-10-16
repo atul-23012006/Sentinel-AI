@@ -299,10 +299,10 @@ def test_alerts_and_explain_require_admin_role(client, monkeypatch):
     assert client.patch(f"/alerts/{alert_id}", json={"status": "RESOLVED"}, headers=headers).status_code == 403
 
 
-def test_rapid_fire_access_is_blocked_and_flagged_even_at_low_risk(client, monkeypatch):
+def test_rapid_fire_access_requires_step_up_and_is_flagged_even_at_low_risk(client, monkeypatch):
     # Burst detection is a deterministic rate-limit independent of the ML
-    # risk score - pin the score low so a BLOCK here can only be explained
-    # by request volume, not behavioral risk.
+    # risk score - pin the score low so the step-up here can only be
+    # explained by request volume, not behavioral risk.
     monkeypatch.setattr(settings, "tbac_start_hour", 0)
     monkeypatch.setattr(settings, "tbac_end_hour", 24)
     monkeypatch.setattr(risk_engine, "score", _fake_score(5))
@@ -319,14 +319,43 @@ def test_rapid_fire_access_is_blocked_and_flagged_even_at_low_risk(client, monke
         last_body = response.json()
 
     # The first 9 are ordinary low-risk ALLOWs; the 10th crosses the burst
-    # threshold and gets blocked regardless of its (low) risk score.
-    assert last_body["final_decision"] == "BLOCK"
+    # threshold and requires step-up despite its (low) risk score - this
+    # user has no TOTP configured, so that means email verification.
+    assert last_body["final_decision"] == "EMAIL_VERIFICATION_REQUIRED"
     assert last_body["risk_score"] == 5
 
-    alerts = client.get("/alerts", params={"severity": "CRITICAL"}, headers=admin).json()
+    alerts = client.get("/alerts", headers=admin).json()
     rapid_fire = [a for a in alerts if a["alert_type"] == "RAPID_FIRE_ACCESS"]
     assert len(rapid_fire) == 1
     assert rapid_fire[0]["event_id"] == last_body["event_id"]
+    assert rapid_fire[0]["severity"] == "HIGH"  # softened to a step-up, not a hard block
+
+
+def test_repeated_bursts_eventually_lock_the_account(client, monkeypatch):
+    # A single burst only asks for step-up (see test above); enough of them
+    # in a row should still drive the account to full lockout, same as any
+    # other repeated step-up/block.
+    monkeypatch.setattr(settings, "tbac_start_hour", 0)
+    monkeypatch.setattr(settings, "tbac_end_hour", 24)
+    monkeypatch.setattr(risk_engine, "score", _fake_score(5))
+    monkeypatch.setattr(settings, "max_burst_requests", 2)
+    monkeypatch.setattr(settings, "burst_window_seconds", 3600)
+    monkeypatch.setattr(settings, "max_blocked_requests", 3)
+
+    headers, admin, me, resource = setup_allowed_user(client, "repeat_clicker")
+
+    last_body = None
+    for _ in range(4):
+        response = client.post(
+            f"/resources/{resource['resource_id']}/access", json={"action": "READ"}, headers=headers
+        )
+        last_body = response.json()
+
+    assert last_body["final_decision"] == "BLOCK"
+    assert last_body["account_locked"] is True
+
+    locked_user = client.get(f"/users/{me['user_id']}", headers=admin).json()
+    assert locked_user["account_status"] == "LOCKED"
 
 
 def test_burst_detection_does_not_fire_outside_the_window(client, monkeypatch):

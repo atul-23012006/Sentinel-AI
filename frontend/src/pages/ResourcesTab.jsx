@@ -41,7 +41,10 @@ export default function ResourcesTab() {
 
   return (
     <div>
-      <h2>Resources &amp; Access Simulator</h2>
+      <div className="page-header">
+        <h2>Resources &amp; access</h2>
+        <p>Request access to a resource and see exactly how each policy and the risk engine decided.</p>
+      </div>
       {error && <div className="error-box">{error}</div>}
 
       {isAdmin && (
@@ -281,7 +284,7 @@ function GrantsPanel({ resource }) {
   }
 
   return (
-    <div className="card" style={{ marginTop: 12, background: "#0e1626" }}>
+    <div className="card card-subtle" style={{ marginTop: 12 }}>
       <strong>Explicit access grants</strong>
       <p className="muted">
         Bypasses RBAC/MAC/ABAC/TBAC/OBAC for one specific user on this resource (e.g. a temporary exception) - it
@@ -401,7 +404,7 @@ function OperationRulesPanel({ resource }) {
   }
 
   return (
-    <div className="card" style={{ marginTop: 12, background: "#0e1626" }}>
+    <div className="card card-subtle" style={{ marginTop: 12 }}>
       <strong>Operation-specific rules (OBAC)</strong>
       <p className="muted">
         Same resource, different rules per action - e.g. everyone in-department can READ, but only an
@@ -523,7 +526,7 @@ function AccessPanel({ resource }) {
   }
 
   return (
-    <div className="card" style={{ background: "#0e1626" }}>
+    <div className="card card-subtle">
       <form className="inline" onSubmit={handleRequest}>
         <div className="field">
           <label>Action</label>

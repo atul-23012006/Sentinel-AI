@@ -46,13 +46,17 @@ def _adaptive_decision(
 
     burst_detected is a deterministic rate-limit signal (too many access
     attempts in too short a window - see request_access) independent of the
-    ML-blended risk_score, forcing BLOCK even when behavioral risk reads low.
+    ML-blended risk_score. It forces at least a step-up challenge even when
+    behavioral risk reads low, giving the user a chance to reconfirm their
+    identity before anything harsher kicks in; repeated triggers still drive
+    the account toward a full lockout via the blocked_request_count ladder
+    below, same as any other repeated step-up/block.
     """
     if policy_decision == "DENY":
         return "DENY"
-    if burst_detected or risk_score >= settings.risk_block_threshold:
+    if risk_score >= settings.risk_block_threshold:
         return "BLOCK"
-    if risk_score >= settings.risk_mfa_threshold:
+    if burst_detected or risk_score >= settings.risk_mfa_threshold:
         return "MFA_REQUIRED" if mfa_available else "EMAIL_VERIFICATION_REQUIRED"
     return "ALLOW"
 
@@ -256,13 +260,16 @@ def request_access(
         mfa_available=bool(current_user.otp_secret),
         burst_detected=burst_detected,
     )
-    if burst_detected and final_decision == "BLOCK" and evaluation.final_decision != "DENY":
-        reason = (
-            f"{reason}; Rapid-fire access: {recent_request_count + 1} requests within "
-            f"{settings.burst_window_seconds}s (threshold {settings.max_burst_requests})"
-        )
-    elif final_decision != evaluation.final_decision:
-        reason = f"{reason}; Adaptive response: risk score {risk_result.score}/100 ({'; '.join(risk_result.reasons)})"
+    if final_decision != evaluation.final_decision:
+        notes = []
+        if burst_detected:
+            notes.append(
+                f"rapid-fire access: {recent_request_count + 1} requests within "
+                f"{settings.burst_window_seconds}s (threshold {settings.max_burst_requests})"
+            )
+        if risk_result.score >= settings.risk_mfa_threshold:
+            notes.append(f"risk score {risk_result.score}/100 ({'; '.join(risk_result.reasons)})")
+        reason = f"{reason}; Adaptive response: " + "; ".join(notes)
 
     # Repeated-abuse escalation: every step-up challenge or block counts
     # against the user. Crossing the threshold converts this request into a
@@ -314,17 +321,21 @@ def request_access(
     if evaluation.final_decision == "ALLOW":
         alert = create_alert_if_needed(db, event=event, risk_score=risk_result.score, reasons=risk_result.reasons)
 
-    if burst_detected and final_decision == "BLOCK" and evaluation.final_decision != "DENY":
+    if burst_detected and evaluation.final_decision != "DENY":
+        # Flagged regardless of whether this burst only triggered a step-up
+        # challenge or escalated all the way to BLOCK (e.g. risk_score was
+        # independently already over threshold, or the lockout ladder below
+        # just tripped) - severity mirrors how severely it ended up handled.
         burst_alert = SecurityAlert(
             user_id=current_user.user_id,
             event_id=event.event_id,
             alert_type="RAPID_FIRE_ACCESS",
             risk_score=risk_result.score,
-            severity="CRITICAL",
+            severity="CRITICAL" if final_decision == "BLOCK" else "HIGH",
             description=(
                 f"{recent_request_count + 1} resource-access attempts within "
                 f"{settings.burst_window_seconds}s (threshold {settings.max_burst_requests}) - "
-                "request denied and flagged for review."
+                f"flagged for review, request resolved as {final_decision}."
             ),
             status="OPEN",
         )

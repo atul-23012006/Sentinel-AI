@@ -54,7 +54,7 @@ export const api = {
   mfaVerify: (event_id, code) => request("/auth/mfa/verify", { method: "POST", body: { event_id, code } }),
   emailVerify: (event_id, code) => request("/auth/email-verify/verify", { method: "POST", body: { event_id, code } }),
 
-  listUsers: () => request("/users"),
+  listUsers: (params) => request("/users", { params }),
   updateUser: (userId, payload) => request(`/users/${userId}`, { method: "PATCH", body: payload }),
 
   listResources: () => request("/resources"),

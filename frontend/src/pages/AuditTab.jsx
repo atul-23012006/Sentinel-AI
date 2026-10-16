@@ -18,7 +18,10 @@ export default function AuditTab() {
 
   return (
     <div>
-      <h2>Audit Log</h2>
+      <div className="page-header">
+        <h2>Audit log</h2>
+        <p>Every login, access request and verification — passed or failed.</p>
+      </div>
       {error && <div className="error-box">{error}</div>}
 
       <form className="inline" style={{ marginBottom: 16 }} onSubmit={(e) => e.preventDefault()}>

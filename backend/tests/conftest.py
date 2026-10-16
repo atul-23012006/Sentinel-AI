@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 
@@ -31,7 +32,17 @@ def client():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # Every existing test assumes a registered user can log in immediately -
+    # tests that specifically exercise admin-gated registration turn this
+    # back on with monkeypatch (same pattern as tbac_start_hour/end_hour
+    # elsewhere in this suite).
+    original_require_admin_approval = settings.require_admin_approval
+    settings.require_admin_approval = False
+
     with TestClient(app) as test_client:
         yield test_client
+
+    settings.require_admin_approval = original_require_admin_approval
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     device_trust        VARCHAR(32) NOT NULL DEFAULT 'UNTRUSTED'
                             CHECK (device_trust IN ('TRUSTED', 'UNTRUSTED')),
     account_status      VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'
-                            CHECK (account_status IN ('ACTIVE', 'LOCKED', 'DISABLED')),
+                            CHECK (account_status IN ('PENDING', 'ACTIVE', 'LOCKED', 'DISABLED')),
     failed_login_count  INTEGER NOT NULL DEFAULT 0,
     blocked_request_count INTEGER NOT NULL DEFAULT 0,
     otp_secret          VARCHAR(64),

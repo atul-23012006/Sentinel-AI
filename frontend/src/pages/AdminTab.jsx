@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { StatusBadge } from "../components/Badges.jsx";
 
 const CLEARANCES = ["PUBLIC", "CONFIDENTIAL", "SECRET", "TOP_SECRET"];
 
@@ -20,10 +21,12 @@ export default function AdminTab() {
     refresh();
   }
 
-  async function reactivate(user) {
-    await api.updateUser(user.user_id, { account_status: "ACTIVE" });
+  async function setAccountStatus(user, account_status) {
+    await api.updateUser(user.user_id, { account_status });
     refresh();
   }
+
+  const pendingCount = users.filter((u) => u.account_status === "PENDING").length;
 
   async function saveEdit(userId, payload) {
     await api.updateUser(userId, payload);
@@ -33,13 +36,16 @@ export default function AdminTab() {
 
   return (
     <div>
-      <h2>User Administration</h2>
-      <p className="muted">
-        Device trust (ABAC), account reactivation after lockout, and a user's role/department/clearance are all
-        security decisions (README §4.1/§4.2) - otherwise self-declared at registration with no approval step - so
-        they're admin-only here.
-      </p>
+      <div className="page-header">
+        <h2>Users</h2>
+        <p>Approve new accounts, trust devices, unlock accounts, and adjust role, department or clearance.</p>
+      </div>
       {error && <div className="error-box">{error}</div>}
+      {pendingCount > 0 && (
+        <div className="notice notice-warn">
+          <strong>{pendingCount}</strong> account{pendingCount === 1 ? "" : "s"} awaiting your approval
+        </div>
+      )}
 
       <div className="card">
         <table>
@@ -65,7 +71,9 @@ export default function AdminTab() {
                   <td>{u.department}</td>
                   <td>{u.clearance_level}</td>
                   <td>{u.device_trust}</td>
-                  <td>{u.account_status}</td>
+                  <td>
+                    <StatusBadge status={u.account_status} />
+                  </td>
                   <td style={{ display: "flex", gap: 6 }}>
                     <button className="secondary" onClick={() => setEditingId(u.user_id)}>
                       Edit
@@ -73,8 +81,18 @@ export default function AdminTab() {
                     <button className="secondary" onClick={() => toggleDeviceTrust(u)}>
                       {u.device_trust === "TRUSTED" ? "Untrust device" : "Trust device"}
                     </button>
+                    {u.account_status === "PENDING" && (
+                      <>
+                        <button className="primary" onClick={() => setAccountStatus(u, "ACTIVE")}>
+                          Approve
+                        </button>
+                        <button className="danger" onClick={() => setAccountStatus(u, "DISABLED")}>
+                          Reject
+                        </button>
+                      </>
+                    )}
                     {u.account_status === "LOCKED" && (
-                      <button className="primary" onClick={() => reactivate(u)}>
+                      <button className="primary" onClick={() => setAccountStatus(u, "ACTIVE")}>
                         Reactivate
                       </button>
                     )}

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.audit.service import log_access_event
+from app.auth import email_service
 from app.auth.dependencies import get_current_user
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.config import settings
@@ -25,10 +26,20 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
+    """New accounts start PENDING and can't log in until an Administrator
+    approves them (see login() below and PATCH /users/{id}) - the very
+    first user ever registered is auto-activated as a one-time bootstrap,
+    since there's no admin yet to approve them. Every other admin learns
+    about a new pending account by email (or the backend console if SMTP
+    isn't configured - see app/auth/email_service.py).
+    """
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    is_bootstrap_user = db.query(User).count() == 0
+    account_status = "ACTIVE" if (is_bootstrap_user or not settings.require_admin_approval) else "PENDING"
 
     user = User(
         username=payload.username,
@@ -37,10 +48,20 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         role=payload.role,
         department=payload.department,
         clearance_level=payload.clearance_level,
+        account_status=account_status,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    if account_status == "PENDING":
+        admin_emails = [
+            u.email
+            for u in db.query(User).filter(User.role == "Administrator", User.account_status == "ACTIVE").all()
+        ]
+        for admin_email in admin_emails:
+            email_service.send_registration_pending_notification(admin_email, user.username, user.user_id)
+
     return user
 
 
@@ -77,7 +98,15 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
             final_decision="DENY",
             reason=f"Account status is {user.account_status}",
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
+        messages = {
+            "PENDING": "Account is awaiting administrator approval",
+            "LOCKED": "Account is locked",
+            "DISABLED": "Account is disabled",
+        }
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=messages.get(user.account_status, "Account is not active"),
+        )
 
     if not verify_password(payload.password, user.password_hash):
         user.failed_login_count += 1

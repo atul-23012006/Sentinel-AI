@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_role
 from app.database import get_db
-from app.models import AccessEvent, User
+from app.models import AccessEvent, SecurityAlert, User
 from app.schemas import AccessEventRead, AuditSummary
 
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -57,17 +58,21 @@ def summary(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role("Administrator")),
 ):
-    events = db.query(AccessEvent).all()
+    by_decision = dict(
+        db.query(AccessEvent.final_decision, func.count(AccessEvent.event_id))
+        .group_by(AccessEvent.final_decision)
+        .all()
+    )
     since = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    def as_aware(ts: datetime) -> datetime:
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-
     return AuditSummary(
-        total_events=len(events),
-        allow_count=sum(1 for e in events if e.final_decision == "ALLOW"),
-        deny_count=sum(1 for e in events if e.final_decision == "DENY"),
-        mfa_required_count=sum(1 for e in events if e.final_decision == "MFA_REQUIRED"),
-        block_count=sum(1 for e in events if e.final_decision == "BLOCK"),
-        events_last_24h=sum(1 for e in events if as_aware(e.timestamp) >= since),
+        total_events=sum(by_decision.values()),
+        allow_count=by_decision.get("ALLOW", 0),
+        deny_count=by_decision.get("DENY", 0),
+        mfa_required_count=by_decision.get("MFA_REQUIRED", 0),
+        email_verification_count=by_decision.get("EMAIL_VERIFICATION_REQUIRED", 0),
+        block_count=by_decision.get("BLOCK", 0),
+        events_last_24h=db.query(AccessEvent).filter(AccessEvent.timestamp >= since).count(),
+        open_alerts_count=db.query(SecurityAlert).filter(SecurityAlert.status == "OPEN").count(),
+        pending_users_count=db.query(User).filter(User.account_status == "PENDING").count(),
     )

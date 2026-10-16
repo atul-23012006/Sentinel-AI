@@ -11,10 +11,17 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.get("", response_model=list[UserRead])
 def list_users(
+    account_status: str | None = None,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role("Administrator")),
 ):
-    return db.query(User).all()
+    """Optional ?account_status=PENDING filter - the admin console's pending-
+    approvals view uses this to surface new registrations awaiting review.
+    """
+    query = db.query(User)
+    if account_status is not None:
+        query = query.filter(User.account_status == account_status)
+    return query.all()
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -36,15 +43,16 @@ def update_user(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role("Administrator")),
 ):
-    """Admin-only: trust a device (ABAC, README §4.2), reactivate a locked
-    account (README §4.1's account_status), or change a user's role/
-    department/clearance_level - these are otherwise only self-declared at
-    registration with no approval step, so changing them later is
-    deliberately admin-gated rather than self-service. Resetting
-    account_status to ACTIVE also clears failed_login_count and
-    blocked_request_count so neither lockout counter immediately re-trips -
-    this is the "admin verification and confirmation" step that unlocks an
-    account the repeated-abuse escalation in app/resources/router.py locked.
+    """Admin-only: trust a device (ABAC, README §4.2), approve a PENDING
+    registration or reactivate a locked account (README §4.1's
+    account_status), or change a user's role/department/clearance_level -
+    these are otherwise only self-declared at registration with no approval
+    step, so changing them later is deliberately admin-gated rather than
+    self-service. Setting account_status to ACTIVE also clears
+    failed_login_count and blocked_request_count so neither lockout counter
+    immediately re-trips - this is the "admin verification and confirmation"
+    step that both admits a new PENDING user and unlocks an account the
+    repeated-abuse escalation in app/resources/router.py locked.
     """
     user = db.query(User).filter(User.user_id == user_id).first()
     if user is None:

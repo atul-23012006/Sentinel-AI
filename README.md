@@ -8,7 +8,8 @@ It combines a five-dimension hybrid policy engine (RBAC + MAC + ABAC + TBAC + OB
 
 - **Hybrid policy engine** — RBAC, MAC, ABAC, TBAC evaluated together (AND-combined), plus **OBAC** for per-operation rules on the same resource (e.g. everyone in-department can `READ`, only an `Administrator` can `DELETE`), plus admin-issued **explicit grants** that can override a denial for one specific user/resource/action.
 - **Behavioral risk engine** — a trained Isolation Forest (measured F1 90.5%, recall 98.8%, ROC-AUC 0.99 — see [`docs/ml-evaluation.md`](docs/ml-evaluation.md)) blended with a deterministic rule-based score, driving adaptive responses: `ALLOW` → step-up (TOTP MFA, or a one-time emailed code if MFA isn't set up) → `BLOCK`.
-- **Repeated-abuse lockout & burst detection** — enough step-up challenges/blocks in a row, or too many raw access attempts in too short a window (independent of the risk score), auto-locks the account and raises a `CRITICAL` alert, pending admin reactivation.
+- **Repeated-abuse lockout & burst detection** — too many raw access attempts in too short a window (independent of the risk score) forces a step-up challenge and raises a flagged alert; enough step-up challenges or blocks in a row, from any cause, auto-locks the account pending admin reactivation.
+- **Admin-gated registration** — a new account starts `PENDING` and can't log in until an Administrator approves it (the very first user ever is auto-activated as a bootstrap admin); every active admin gets an email notification of the pending request.
 - **Security alerts & AI analyst** — automatic alerting on risky behavior, plus an AI-generated plain-language incident explanation (Anthropic API, with a template fallback) — advisory only, never overrides a policy decision.
 - **Centralized audit log** — every login, access request, and MFA verification is recorded, pass or fail.
 - **Admin console** — a React/Vite dashboard: access simulator, alerts queue, audit log, user/resource administration.
@@ -63,7 +64,7 @@ Then open **http://localhost:5173**. The backend's interactive API docs are at *
 cd backend && source .venv/bin/activate && pytest
 ```
 
-Uses an in-memory SQLite DB — no Postgres required, 85 tests covering the policy engine, risk engine, adaptive security (MFA + email step-up, repeated-abuse lockout, burst detection), alerts, AI analyst, and admin overrides.
+Uses an in-memory SQLite DB — no Postgres required, 94 tests covering the policy engine, risk engine, adaptive security (MFA + email step-up, repeated-abuse lockout, burst detection), admin-gated registration, alerts, AI analyst, and admin overrides.
 
 ### ML pipeline (optional — a trained model is already committed)
 
@@ -79,8 +80,9 @@ python3 ml/evaluation/evaluate.py  # -> ml/evaluation/results.json
 Via **http://localhost:8000/docs** (or the frontend's access simulator):
 
 - **Step-up MFA / email verification**: trigger elevated risk on `POST /resources/{id}/access` (e.g. an unfamiliar `device_id`/`location`, or enough prior activity) — the response's `final_decision` becomes `MFA_REQUIRED` (if you've set up TOTP via `/auth/mfa/setup`) or `EMAIL_VERIFICATION_REQUIRED` otherwise. With no SMTP configured, the one-time code is logged to the backend console instead of actually emailed.
-- **Burst detection**: call `POST /resources/{id}/access` on the same resource **10 times within a minute** — the 10th call returns `"final_decision": "BLOCK"` and raises a `RAPID_FIRE_ACCESS` alert, independent of behavioral risk score.
+- **Burst detection**: call `POST /resources/{id}/access` on the same resource **10 times within a minute** — the 10th call requires step-up verification (same as moderate risk) and raises a `RAPID_FIRE_ACCESS` alert, independent of behavioral risk score. Keep tripping it and the repeated-abuse lockout takes over, same as any other repeated step-up.
 - **Repeated-abuse lockout**: enough step-up challenges or blocks in a row (default 5) flips the account to `LOCKED`; an Administrator reactivates it via `PATCH /users/{id}` with `{"account_status": "ACTIVE"}` (or the Users tab in the admin console).
+- **Admin-gated registration**: register a *second* account (the first one you register becomes an auto-activated bootstrap admin) — it comes back `"account_status": "PENDING"` and can't log in until an Administrator approves it from the Users tab (or `PATCH /users/{id}` with `{"account_status": "ACTIVE"}`). Every active admin is emailed when a new account is pending (or it's logged to the backend console if SMTP isn't configured).
 
 ## Project structure
 

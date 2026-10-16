@@ -34,12 +34,13 @@ export default function AlertsTab() {
 
   return (
     <div>
-      <h2>Security Alerts</h2>
-      <p className="muted">
-        Raised automatically by the risk engine when a policy-allowed action's behavioral risk score crosses the
-        monitoring threshold. "Explain" calls the AI Security Analyst for a plain-language summary - advisory only,
-        it never changes the access decision.
-      </p>
+      <div className="page-header">
+        <h2>Security alerts</h2>
+        <p>
+          Raised automatically when behavioral risk crosses a threshold. "Explain" asks the AI analyst for a
+          plain-language summary — advisory only, it never changes an access decision.
+        </p>
+      </div>
       {error && <div className="error-box">{error}</div>}
 
       <div className="field" style={{ marginBottom: 14, maxWidth: 220 }}>

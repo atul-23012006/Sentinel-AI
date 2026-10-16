@@ -10,6 +10,12 @@ the database directly, so it exercises the real registration/admin flow.
 All demo accounts share one password. This is a local-dev/demo convenience
 only - never do this against a real deployment.
 
+If REQUIRE_ADMIN_APPROVAL is on (the default) and the backend already has
+at least one user, this script's own bootstrap admin registration will come
+back PENDING and the immediate login will fail - either set
+REQUIRE_ADMIN_APPROVAL=false in backend/.env for seeding, or approve
+`demo_bootstrap_admin` via an existing admin account first.
+
 Usage:
     python3 scripts/seed_demo_users.py [--base-url http://localhost:8000]
 """

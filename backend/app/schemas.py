@@ -39,7 +39,7 @@ class UserAdminUpdate(BaseModel):
     """
 
     device_trust: str | None = Field(default=None, pattern="^(TRUSTED|UNTRUSTED)$")
-    account_status: str | None = Field(default=None, pattern="^(ACTIVE|LOCKED|DISABLED)$")
+    account_status: str | None = Field(default=None, pattern="^(PENDING|ACTIVE|LOCKED|DISABLED)$")
     role: str | None = Field(default=None, min_length=1, max_length=64)
     department: str | None = Field(default=None, min_length=1, max_length=64)
     clearance_level: str | None = Field(default=None, pattern="^(PUBLIC|CONFIDENTIAL|SECRET|TOP_SECRET)$")
@@ -126,8 +126,11 @@ class AuditSummary(BaseModel):
     allow_count: int
     deny_count: int
     mfa_required_count: int
+    email_verification_count: int = 0
     block_count: int
     events_last_24h: int
+    open_alerts_count: int = 0
+    pending_users_count: int = 0
 
 
 class MFASetupRead(BaseModel):
